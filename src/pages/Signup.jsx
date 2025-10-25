@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft } from "lucide-react"
+import { createUserWithEmailAndPassword } from "firebase/auth"
+import { auth } from "../lib/firebase"
 
 export default function SignUpPage() {
   const navigate = useNavigate();
@@ -20,19 +22,29 @@ export default function SignUpPage() {
     setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     if (formData.password !== formData.confirmPassword) {
       alert("Passwords do not match")
       return
     }
     setIsLoading(true)
-    // Simulate signup
-    setTimeout(() => {
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+      const user = userCredential.user;
+      await fetch('/api/v1/auth/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: formData.email, password: formData.password, displayName: formData.name }),
+      });
+      navigate("/profile-setup");
+    } catch (error) {
+      alert(error.message);
+    } finally {
       setIsLoading(false)
-      // Redirect to profile creation
-      navigate("/profile-setup")
-    }, 1000)
+    }
   }
 
   return (

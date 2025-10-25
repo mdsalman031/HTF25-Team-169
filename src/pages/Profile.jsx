@@ -1,79 +1,43 @@
+import { useState, useEffect } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Edit2, Award, ThumbsUp } from "lucide-react"
+import { auth, db } from "../lib/firebase"
+import { collection, getDocs, query, where } from "firebase/firestore";
 
 export default function UserProfilePage() {
-  const userProfile = {
-    name: "John Doe",
-    profileId: "PL-JOHN123",
-    email: "john@example.com",
-    bio: "Passionate full-stack developer interested in learning machine learning",
-    qualification: "Bachelor's in Information Technology",
-    skills: ["JavaScript", "React", "Node.js", "MongoDB"],
-    wantsToLearn: ["Python", "Machine Learning"],
-    languages: ["English", "French"],
-    gender: "Male",
-    age: 26,
-    rating: 4.6,
-    totalReviews: 8,
-    sessionsCompleted: 5,
-    sessionsTaught: 3,
-    certifications: [
-      {
-        id: 1,
-        name: "Google Cloud Associate Cloud Engineer",
-        issuer: "Google Cloud",
-        image: "/google-cloud-certificate.jpg",
-        date: "2024-06-15",
-      },
-      {
-        id: 2,
-        name: "AWS Certified Solutions Architect",
-        issuer: "Amazon Web Services",
-        image: "/aws-certificate.jpg",
-        date: "2024-03-20",
-      },
-      {
-        id: 3,
-        name: "React Advanced Patterns",
-        issuer: "Udemy",
-        image: "/react-certificate.jpg",
-        date: "2024-01-10",
-      },
-    ],
-    endorsements: [
-      {
-        id: 1,
-        endorsedBy: "Sarah Chen",
-        skill: "React",
-        avatar: "SC",
-      },
-      {
-        id: 2,
-        endorsedBy: "Alex Kim",
-        skill: "JavaScript",
-        avatar: "AK",
-      },
-      {
-        id: 3,
-        endorsedBy: "Maria Garcia",
-        skill: "Node.js",
-        avatar: "MG",
-      },
-      {
-        id: 4,
-        endorsedBy: "David Lee",
-        skill: "React",
-        avatar: "DL",
-      },
-      {
-        id: 5,
-        endorsedBy: "Emma Wilson",
-        skill: "MongoDB",
-        avatar: "EW",
-      },
-    ],
+  const [userProfile, setUserProfile] = useState(null);
+  const [certifications, setCertifications] = useState([]);
+  const [endorsements, setEndorsements] = useState([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const user = auth.currentUser;
+      if (user) {
+        // Fetch user profile
+        const userDoc = await getDocs(query(collection(db, "users"), where("uid", "==", user.uid)));
+        if (!userDoc.empty) {
+          setUserProfile(userDoc.docs[0].data());
+
+          // Fetch certifications
+          const certsCollection = await getDocs(collection(db, "users", userDoc.docs[0].id, "certifications"));
+          const certsData = certsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setCertifications(certsData);
+
+          // Fetch endorsements
+          const endorsementsCollection = await getDocs(collection(db, "users", userDoc.docs[0].id, "endorsements"));
+          const endorsementsData = endorsementsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setEndorsements(endorsementsData);
+        }
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  if (!userProfile) {
+    return <div>Loading...</div>; // Or a proper loader
   }
 
   return (
@@ -98,11 +62,11 @@ export default function UserProfilePage() {
           <div className="flex flex-col sm:flex-row gap-6 items-start justify-between">
             <div className="flex gap-6 items-start flex-1">
               <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-primary/10 text-primary text-4xl font-bold flex-shrink-0">
-                JD
+                {userProfile.displayName.charAt(0)}
               </div>
               <div>
-                <h1 className="text-3xl font-bold">{userProfile.name}</h1>
-                <p className="text-muted-foreground">{userProfile.profileId}</p>
+                <h1 className="text-3xl font-bold">{userProfile.displayName}</h1>
+                <p className="text-muted-foreground">{userProfile.uid}</p>
                 <p className="text-sm text-muted-foreground mt-2">{userProfile.email}</p>
               </div>
             </div>
@@ -177,7 +141,7 @@ export default function UserProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {userProfile.certifications.map((cert) => (
+                  {certifications.map((cert) => (
                     <div
                       key={cert.id}
                       className="border border-border rounded-lg p-4 hover:bg-accent/5 transition-colors"
@@ -240,13 +204,13 @@ export default function UserProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {userProfile.endorsements.map((endorsement) => (
+                  {endorsements.map((endorsement) => (
                     <div
                       key={endorsement.id}
                       className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent/5 transition-colors"
                     >
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-sm flex-shrink-0">
-                        {endorsement.avatar}
+                        {endorsement.endorsedBy.charAt(0)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium">{endorsement.endorsedBy}</p>

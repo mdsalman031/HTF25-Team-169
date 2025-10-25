@@ -1,70 +1,53 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Search, LogOut, User, MessageSquare } from "lucide-react"
-
-// Mock data for collaborators
-const mockCollaborators = [
-  {
-    id: 1,
-    name: "Sarah Chen",
-    profileId: "PL-SARAH123",
-    skills: ["React", "TypeScript", "UI Design"],
-    wantsToLearn: ["Python", "Machine Learning"],
-    rating: 4.8,
-    bio: "Full-stack developer passionate about creating beautiful interfaces",
-    avatar: "SC",
-  },
-  {
-    id: 2,
-    name: "Marcus Johnson",
-    profileId: "PL-MARCUS456",
-    skills: ["Python", "Data Science", "Machine Learning"],
-    wantsToLearn: ["Web Development", "React"],
-    rating: 4.9,
-    bio: "Data scientist with 5+ years of experience",
-    avatar: "MJ",
-  },
-  {
-    id: 3,
-    name: "Emma Rodriguez",
-    profileId: "PL-EMMA789",
-    skills: ["UI/UX Design", "Figma", "Product Strategy"],
-    wantsToLearn: ["Frontend Development", "JavaScript"],
-    rating: 4.7,
-    bio: "Product designer focused on user-centered design",
-    avatar: "ER",
-  },
-  {
-    id: 4,
-    name: "Alex Kim",
-    profileId: "PL-ALEX012",
-    skills: ["DevOps", "Docker", "Kubernetes"],
-    wantsToLearn: ["System Design", "Cloud Architecture"],
-    rating: 4.6,
-    bio: "DevOps engineer with cloud infrastructure expertise",
-    avatar: "AK",
-  },
-]
-
-// Mock skills suggestions
-const skillSuggestions = [
-  "Python",
-  "Machine Learning",
-  "Web Design",
-  "Data Analysis",
-  "Cloud Computing",
-  "Mobile Development",
-  "Project Management",
-  "Digital Marketing",
-]
+import { auth, db } from "../lib/firebase"
+import { collection, getDocs, query, where } from "firebase/firestore";
 
 export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedSkills, setSelectedSkills] = useState({})
-  const [filteredCollaborators, setFilteredCollaborators] = useState(mockCollaborators)
+  const [collaborators, setCollaborators] = useState([])
+  const [filteredCollaborators, setFilteredCollaborators] = useState([])
+  const [skillSuggestions, setSkillSuggestions] = useState([])
+  const [recentSessions, setRecentSessions] = useState([])
+  const [currentUser, setCurrentUser] = useState(null)
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const user = auth.currentUser;
+      if (user) {
+        // Fetch current user's data
+        const userDoc = await getDocs(query(collection(db, "users"), where("uid", "==", user.uid)));
+        if (!userDoc.empty) {
+          setCurrentUser(userDoc.docs[0].data());
+        }
+
+        // Fetch collaborators
+        const usersCollection = await getDocs(collection(db, "users"));
+        const usersData = usersCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCollaborators(usersData);
+        console.log("Fetched collaborators:", usersData);
+        setFilteredCollaborators(usersData);
+
+        // Fetch skills
+        const skillsDoc = await getDocs(collection(db, "skills"));
+        if (!skillsDoc.empty) {
+          setSkillSuggestions(skillsDoc.docs[0].data().list);
+        }
+
+        // Fetch recent sessions
+        const sessionsCollection = await getDocs(query(collection(db, "sessions"), where("student", "==", user.uid)));
+        const sessionsData = sessionsCollection.docs.map(doc => doc.data());
+        setRecentSessions(sessionsData);
+      }
+    };
+
+    fetchData();
+  }, []);
 
   const handleSkillSelect = (skill, type) => {
     setSelectedSkills((prev) => ({
@@ -76,7 +59,7 @@ export default function DashboardPage() {
   const handleSearch = (query) => {
     setSearchQuery(query)
     if (query.trim()) {
-      const filtered = mockCollaborators.filter(
+      const filtered = collaborators.filter(
         (collab) =>
           collab.name.toLowerCase().includes(query.toLowerCase()) ||
           collab.skills.some((s) => s.toLowerCase().includes(query.toLowerCase())) ||
@@ -84,7 +67,7 @@ export default function DashboardPage() {
       )
       setFilteredCollaborators(filtered)
     } else {
-      setFilteredCollaborators(mockCollaborators)
+      setFilteredCollaborators(collaborators)
     }
   }
 
@@ -120,7 +103,7 @@ export default function DashboardPage() {
       <main className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
         {/* Welcome Section */}
         <div className="mb-12">
-          <h1 className="text-3xl font-bold mb-2">Welcome Back, John!</h1>
+          <h1 className="text-3xl font-bold mb-2">Welcome Back, {currentUser?.name}!</h1>
           <p className="text-muted-foreground">Find peers to learn from and share your expertise</p>
         </div>
 
@@ -185,7 +168,7 @@ export default function DashboardPage() {
                       <div className="flex gap-4">
                         {/* Avatar */}
                         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary font-bold flex-shrink-0">
-                          {collaborator.avatar}
+                          {collaborator.name.charAt(0)}
                         </div>
 
                         {/* Content */}
@@ -193,7 +176,7 @@ export default function DashboardPage() {
                           <div className="flex items-start justify-between gap-4 mb-2">
                             <div>
                               <h3 className="font-semibold text-lg">{collaborator.name}</h3>
-                              <p className="text-sm text-muted-foreground">{collaborator.profileId}</p>
+                              <p className="text-sm text-muted-foreground">{collaborator.id}</p>
                             </div>
                             <div className="text-right flex-shrink-0">
                               <div className="text-lg font-bold text-primary">{collaborator.rating}</div>
@@ -260,23 +243,10 @@ export default function DashboardPage() {
               <Card>
                 <CardContent className="pt-6">
                   <div className="space-y-4">
-                    {[
-                      {
-                        name: "Sarah Chen",
-                        skill: "React Advanced Patterns",
-                        status: "pending",
-                        date: "Oct 28, 2025",
-                      },
-                      {
-                        name: "Marcus Johnson",
-                        skill: "Python Basics",
-                        status: "accepted",
-                        date: "Oct 25, 2025",
-                      },
-                    ].map((request, idx) => (
+                    {recentSessions.map((request, idx) => (
                       <div key={idx} className="flex items-center justify-between p-3 rounded-lg border border-border">
                         <div>
-                          <p className="font-medium">{request.name}</p>
+                          <p className="font-medium">{request.teacher}</p>
                           <p className="text-sm text-muted-foreground">{request.skill}</p>
                           <p className="text-xs text-muted-foreground mt-1">{request.date}</p>
                         </div>

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Plus, X } from "lucide-react"
+import { auth, db } from "@/lib/firebase"
+import { doc, setDoc } from "firebase/firestore"
 
 export default function ProfileSetupPage() {
   const navigate = useNavigate();
@@ -84,14 +86,42 @@ export default function ProfileSetupPage() {
     }))
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     setIsLoading(true)
-    // Simulate profile save
-    setTimeout(() => {
-      setIsLoading(false)
+
+    try {
+      const currentUser = auth.currentUser
+      if (!currentUser) {
+        throw new Error("No authenticated user found")
+      }
+
+      // Prepare the user data with additional fields
+      const userData = {
+        ...formData,
+        userId: currentUser.uid,
+        email: currentUser.email,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isProfileComplete: true,
+        rating: 0,
+        totalSessions: 0,
+        totalHours: 0,
+        joinDate: new Date().toISOString(),
+        lastActive: new Date().toISOString()
+      }
+
+      // Save to Firestore
+      await setDoc(doc(db, "users", currentUser.uid), userData)
+      
+      // Navigate to dashboard after successful setup
       navigate("/dashboard")
-    }, 1000)
+    } catch (error) {
+      console.error("Error saving profile:", error)
+      alert("Failed to save profile. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (

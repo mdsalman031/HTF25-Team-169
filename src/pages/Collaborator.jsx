@@ -1,103 +1,45 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Link, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Star, MessageSquare, Calendar, Award, ThumbsUp } from "lucide-react"
-
-// Mock collaborator data
-const mockCollaboratorData = {
-  id: 1,
-  name: "Sarah Chen",
-  profileId: "PL-SARAH123",
-  avatar: "SC",
-  rating: 4.8,
-  totalReviews: 24,
-  bio: "Full-stack developer passionate about creating beautiful interfaces and mentoring junior developers. I love working on challenging projects and sharing knowledge with the community.",
-  qualification: "Bachelor's in Computer Science",
-  skills: ["React", "TypeScript", "UI Design", "Node.js", "MongoDB"],
-  wantsToLearn: ["Python", "Machine Learning", "DevOps"],
-  languages: ["English", "Mandarin", "Spanish"],
-  gender: "Female",
-  age: 28,
-  email: "sarah@example.com",
-  availabilityDate: "2025-10-28",
-  availabilityTime: "14:00",
-  sessionsCompleted: 12,
-  sessionsTaught: 8,
-  certifications: [
-    {
-      id: 1,
-      name: "AWS Certified Solutions Architect",
-      issuer: "Amazon Web Services",
-      image: "/aws-certificate.jpg",
-      date: "2024-05-10",
-    },
-    {
-      id: 2,
-      name: "React Advanced Patterns",
-      issuer: "Udemy",
-      image: "/react-certificate.jpg",
-      date: "2024-02-15",
-    },
-  ],
-  endorsements: [
-    {
-      id: 1,
-      endorsedBy: "John Doe",
-      skill: "React",
-      avatar: "JD",
-    },
-    {
-      id: 2,
-      endorsedBy: "Michael Zhang",
-      skill: "TypeScript",
-      avatar: "MZ",
-    },
-    {
-      id: 3,
-      endorsedBy: "Lisa Anderson",
-      skill: "UI Design",
-      avatar: "LA",
-    },
-    {
-      id: 4,
-      endorsedBy: "James Wilson",
-      skill: "Node.js",
-      avatar: "JW",
-    },
-    {
-      id: 5,
-      endorsedBy: "Emma Davis",
-      skill: "React",
-      avatar: "ED",
-    },
-    {
-      id: 6,
-      endorsedBy: "Robert Brown",
-      skill: "MongoDB",
-      avatar: "RB",
-    },
-  ],
-  feedbacks: [
-    {
-      author: "John Doe",
-      rating: 5,
-      text: "Sarah is an excellent mentor! Very patient and explains concepts clearly.",
-      date: "Oct 20, 2025",
-    },
-    {
-      author: "Alex Kim",
-      rating: 4.5,
-      text: "Great session on React patterns. Highly recommended!",
-      date: "Oct 15, 2025",
-    },
-  ],
-}
+import { db } from "@/lib/firebase"
+import { collection, getDocs, query, where, doc, getDoc } from "firebase/firestore";
 
 export default function CollaboratorProfilePage() {
   const { id } = useParams();
   const [isRequesting, setIsRequesting] = useState(false)
-  const collaborator = mockCollaboratorData
+  const [collaborator, setCollaborator] = useState(null);
+  const [certifications, setCertifications] = useState([]);
+  const [endorsements, setEndorsements] = useState([]);
+  const [feedbacks, setFeedbacks] = useState([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      // Fetch collaborator profile
+      const userDoc = await getDoc(doc(db, "users", id));
+      if (userDoc.exists()) {
+        setCollaborator(userDoc.data());
+
+        // Fetch certifications
+        const certsCollection = await getDocs(collection(db, "users", id, "certifications"));
+        const certsData = certsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCertifications(certsData);
+
+        // Fetch endorsements
+        const endorsementsCollection = await getDocs(collection(db, "users", id, "endorsements"));
+        const endorsementsData = endorsementsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setEndorsements(endorsementsData);
+
+        // Fetch feedbacks
+        const feedbacksCollection = await getDocs(collection(db, "users", id, "feedbacks"));
+        const feedbacksData = feedbacksCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setFeedbacks(feedbacksData);
+      }
+    };
+
+    fetchData();
+  }, [id]);
 
   const handleRequestSession = () => {
     setIsRequesting(true)
@@ -105,6 +47,10 @@ export default function CollaboratorProfilePage() {
       setIsRequesting(false)
       alert("Session request sent!")
     }, 1000)
+  }
+
+  if (!collaborator) {
+    return <div>Loading...</div>; // Or a proper loader
   }
 
   return (
@@ -129,15 +75,15 @@ export default function CollaboratorProfilePage() {
           <div className="flex flex-col sm:flex-row gap-6 items-start">
             {/* Avatar */}
             <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-primary/10 text-primary text-4xl font-bold flex-shrink-0">
-              {collaborator.avatar}
+              {collaborator.displayName.charAt(0)}
             </div>
 
             {/* Profile Info */}
             <div className="flex-1">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
                 <div>
-                  <h1 className="text-3xl font-bold">{collaborator.name}</h1>
-                  <p className="text-muted-foreground">{collaborator.profileId}</p>
+                  <h1 className="text-3xl font-bold">{collaborator.displayName}</h1>
+                  <p className="text-muted-foreground">{id}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1">
@@ -207,7 +153,7 @@ export default function CollaboratorProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {collaborator.certifications.map((cert) => (
+                  {certifications.map((cert) => (
                     <div
                       key={cert.id}
                       className="border border-border rounded-lg p-4 hover:bg-accent/5 transition-colors"
@@ -270,13 +216,13 @@ export default function CollaboratorProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {collaborator.endorsements.map((endorsement) => (
+                  {endorsements.map((endorsement) => (
                     <div
                       key={endorsement.id}
                       className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent/5 transition-colors"
                     >
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-sm flex-shrink-0">
-                        {endorsement.avatar}
+                        {endorsement.endorsedBy.charAt(0)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium">{endorsement.endorsedBy}</p>
@@ -295,10 +241,10 @@ export default function CollaboratorProfilePage() {
             <Card>
               <CardHeader>
                 <CardTitle>Feedbacks & Reviews</CardTitle>
-                <CardDescription>{collaborator.feedbacks.length} reviews from collaborators</CardDescription>
+                <CardDescription>{feedbacks.length} reviews from collaborators</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {collaborator.feedbacks.map((feedback, idx) => (
+                {feedbacks.map((feedback, idx) => (
                   <div key={idx} className="border-b border-border pb-4 last:border-0">
                     <div className="flex items-start justify-between mb-2">
                       <div>

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft } from "lucide-react"
+import { signInWithEmailAndPassword } from "firebase/auth"
+import { auth } from "../lib/firebase"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -11,15 +13,26 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     setIsLoading(true)
-    // Simulate login
-    setTimeout(() => {
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      const idToken = await user.getIdToken();
+      await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ idToken }),
+      });
+      navigate("/dashboard");
+    } catch (error) {
+      alert(error.message);
+    } finally {
       setIsLoading(false)
-      // Redirect to dashboard
-      navigate("/dashboard")
-    }, 1000)
+    }
   }
 
   return (
