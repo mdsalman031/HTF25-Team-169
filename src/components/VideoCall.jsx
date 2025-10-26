@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import io from "socket.io-client";
+import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Phone, Mic, MicOff, Video, VideoOff, ScreenShare, ScreenShareOff, PhoneOff } from "lucide-react";
 import "./VideoCall.css";
@@ -26,19 +27,8 @@ export default function VideoCall({ sessionId, collaboratorName }) {
 
   const joinMeeting = async () => {
     try {
+      // Create PeerConnection and handlers before acquiring media to avoid race conditions
       peerConnection.current = new RTCPeerConnection(servers);
-
-      const localStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-      localStreamRef.current = localStream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = localStream;
-      }
-      localStream.getTracks().forEach((t) =>
-        peerConnection.current.addTrack(t, localStream)
-      );
 
       peerConnection.current.ontrack = (e) => {
         if (remoteVideoRef.current) {
@@ -48,11 +38,50 @@ export default function VideoCall({ sessionId, collaboratorName }) {
       };
 
       peerConnection.current.onicecandidate = (e) => {
-        if (e.candidate)
-          socket.emit("ice-candidate", { roomId, candidate: e.candidate });
+        if (e.candidate) socket.emit("ice-candidate", { roomId, candidate: e.candidate });
       };
 
-      socket.emit("join-room", roomId);
+      peerConnection.current.onconnectionstatechange = () => {
+        const state = peerConnection.current?.connectionState;
+        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+          setRemoteOffline(true);
+        }
+      };
+
+      peerConnection.current.onnegotiationneeded = async () => {
+        try {
+          const offer = await peerConnection.current.createOffer();
+          await peerConnection.current.setLocalDescription(offer);
+          socket.emit('offer', { roomId, offer });
+        } catch (err) {
+          console.error('Negotiation error:', err);
+        }
+      };
+
+      // Request media after handlers are set
+      const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localStreamRef.current = localStream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStream;
+        // Ensure playback starts (some browsers require a play() call)
+        try {
+          await localVideoRef.current.play();
+        } catch (err) {
+          // play() may reject due to autoplay policies; ignore
+          console.debug('local video play() rejected', err);
+        }
+      }
+
+      // Add tracks to peer connection
+      localStream.getTracks().forEach((track) => {
+        try {
+          peerConnection.current.addTrack(track, localStream);
+        } catch (err) {
+          console.warn('Failed to add track', err);
+        }
+      });
+
+  socket.emit('join-room', roomId, auth?.currentUser?.uid || null);
       setJoined(true);
     } catch (error) {
       console.error("Error joining meeting:", error);
@@ -61,22 +90,83 @@ export default function VideoCall({ sessionId, collaboratorName }) {
   };
 
   useEffect(() => {
-    socket.on("user-joined", async () => {
-      if (peerConnection.current) {
+    socket.on("user-joined", async ({ userId, socketId } = {}) => {
+      // Another user joined the room. Ensure we have a PeerConnection and local media,
+      // then create and send an offer so the new user can answer.
+      try {
+        if (!peerConnection.current) {
+          // create pc and handlers
+          peerConnection.current = new RTCPeerConnection(servers);
+          peerConnection.current.ontrack = (e) => {
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = e.streams[0];
+              try { remoteVideoRef.current.play().catch(() => {}); } catch (err) {}
+              setRemoteOffline(false);
+            }
+          };
+          peerConnection.current.onicecandidate = (e) => {
+            if (e.candidate) socket.emit('ice-candidate', { roomId, candidate: e.candidate });
+          };
+        }
+
+        // ensure local media available
+        if (!localStreamRef.current) {
+          const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          localStreamRef.current = localStream;
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = localStream;
+            try { await localVideoRef.current.play(); } catch (e) { console.debug('local play rejected', e); }
+          }
+          localStream.getTracks().forEach((t) => peerConnection.current.addTrack(t, localStream));
+        }
+
+        // create and send offer to the room so the newcomer receives it
         const offer = await peerConnection.current.createOffer();
         await peerConnection.current.setLocalDescription(offer);
-        socket.emit("offer", { roomId, offer });
+        socket.emit('offer', { roomId, offer, from: auth?.currentUser?.uid || null });
+      } catch (err) {
+        console.error('Error handling user-joined:', err);
       }
     });
 
     socket.on("offer", async ({ offer }) => {
-      if (peerConnection.current) {
-        await peerConnection.current.setRemoteDescription(
-          new RTCSessionDescription(offer)
-        );
+      try {
+        if (!peerConnection.current) {
+          // If we don't have a pc yet, create one and set handlers
+          peerConnection.current = new RTCPeerConnection(servers);
+          peerConnection.current.ontrack = (e) => {
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = e.streams[0];
+              // attempt to play remote automatically
+              try {
+                remoteVideoRef.current.play().catch(() => {});
+              } catch (err) {}
+              setRemoteOffline(false);
+            }
+          };
+          peerConnection.current.onicecandidate = (e) => {
+            if (e.candidate) socket.emit('ice-candidate', { roomId, candidate: e.candidate });
+          };
+        }
+
+        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(offer));
+
+        // Ensure local media exists
+        if (!localStreamRef.current) {
+          const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          localStreamRef.current = localStream;
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = localStream;
+            try { await localVideoRef.current.play(); } catch (e) { console.debug('local play rejected', e); }
+          }
+          localStream.getTracks().forEach((t) => peerConnection.current.addTrack(t, localStream));
+        }
+
         const answer = await peerConnection.current.createAnswer();
         await peerConnection.current.setLocalDescription(answer);
-        socket.emit("answer", { roomId, answer });
+        socket.emit('answer', { roomId, answer });
+      } catch (err) {
+        console.error('Error handling offer:', err);
       }
     });
 
@@ -91,9 +181,7 @@ export default function VideoCall({ sessionId, collaboratorName }) {
     socket.on("ice-candidate", async (candidate) => {
       if (peerConnection.current) {
         try {
-          await peerConnection.current.addIceCandidate(
-            new RTCIceCandidate(candidate)
-          );
+          await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (e) {
           console.error("Error adding received ice candidate", e);
         }
@@ -127,29 +215,44 @@ export default function VideoCall({ sessionId, collaboratorName }) {
   const toggleShare = async () => {
     if (!peerConnection.current) return;
     if (!sharing) {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      const screenTrack = screenStream.getVideoTracks()[0];
-      const sender = peerConnection.current.getSenders().find((s) => s.track.kind === "video");
-      sender.replaceTrack(screenTrack);
-      screenStreamRef.current = screenStream;
-      localVideoRef.current.srcObject = screenStream;
-      setSharing(true);
-      screenTrack.onended = () => stopShare();
+      try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+        const sender = peerConnection.current.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(screenTrack);
+        } else {
+          // if no sender found, add track
+          peerConnection.current.addTrack(screenTrack, screenStream);
+        }
+  screenStreamRef.current = screenStream;
+  localVideoRef.current.srcObject = screenStream;
+  try { await localVideoRef.current.play(); } catch (e) { console.debug('screen play rejected', e); }
+  setSharing(true);
+  screenTrack.onended = () => stopShare();
+      } catch (err) {
+        console.error('Error starting screen share', err);
+      }
     } else {
       stopShare();
     }
   };
 
-  const stopShare = () => {
+  const stopShare = async () => {
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach((t) => t.stop());
       screenStreamRef.current = null;
     }
-    if (localStreamRef.current) {
+      if (localStreamRef.current) {
       const camTrack = localStreamRef.current.getVideoTracks()[0];
-      const sender = peerConnection.current.getSenders().find((s) => s.track.kind === "video");
-      sender.replaceTrack(camTrack);
+      const sender = peerConnection.current?.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (sender && camTrack) {
+        try { sender.replaceTrack(camTrack); } catch (err) { console.warn('replaceTrack failed', err); }
+      } else if (camTrack) {
+        try { peerConnection.current.addTrack(camTrack, localStreamRef.current); } catch (err) { console.warn('addTrack failed', err); }
+      }
       localVideoRef.current.srcObject = localStreamRef.current;
+      try { await localVideoRef.current.play(); } catch (e) { console.debug('local play rejected', e); }
     }
     setSharing(false);
   };

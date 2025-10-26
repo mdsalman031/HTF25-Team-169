@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect } from "react"
 import { Link, useParams } from "react-router-dom"
+import { useAuthState } from "react-firebase-hooks/auth"
+import { auth, db, rtdb } from "@/lib/firebase"
+import { doc, getDoc } from "firebase/firestore"
+import { ref, onValue, off, push, set } from "firebase/database"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
@@ -8,34 +12,69 @@ import VideoCall from "@/components/VideoCall"
 
 export default function CollaborationPage() {
   const { sessionId } = useParams();
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: "collaborator",
-      senderName: "Sarah Chen",
-      text: "Hi! Ready to start learning React patterns?",
-      timestamp: "2:30 PM",
-    },
-    {
-      id: 2,
-      sender: "user",
-      senderName: "You",
-      text: "Yes! I'm excited to learn from you.",
-      timestamp: "2:31 PM",
-    },
-    {
-      id: 3,
-      sender: "collaborator",
-      senderName: "Sarah Chen",
-      text: "Great! Let's start with the basics. First, let me share my screen.",
-      timestamp: "2:32 PM",
-    },
-  ])
+  const [user] = useAuthState(auth)
+  const [session, setSession] = useState(null)
+  const [collaborator, setCollaborator] = useState(null)
 
+  const [messages, setMessages] = useState([])
   const [newMessage, setNewMessage] = useState("")
   const [isCallActive, setIsCallActive] = useState(false)
-  const [isVideoOn, setIsVideoOn] = useState(true)
   const messagesEndRef = useRef(null)
+
+  // Load session and collaborator info
+  useEffect(() => {
+    if (!sessionId) return
+
+    const load = async () => {
+      try {
+        const sessionSnap = await getDoc(doc(db, "sessions", sessionId))
+        if (sessionSnap.exists()) {
+          const s = sessionSnap.data()
+          setSession(s)
+
+          // Determine collaborator id (other participant)
+          if (user && Array.isArray(s.participants)) {
+            const otherId = s.participants.find((pid) => pid !== user.uid)
+            if (otherId) {
+              const userSnap = await getDoc(doc(db, "users", otherId))
+              if (userSnap.exists()) setCollaborator(userSnap.data())
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load session:", err)
+      }
+    }
+
+    load()
+  }, [sessionId, user])
+
+  // Build a roomId (stable for two participants) — fallback to sessionId
+  const roomId = (user && collaborator) ? [user.uid, collaborator.userId || collaborator.userId || collaborator.uid || ""].sort().join("_") : sessionId
+
+  // Listen for messages in RTDB
+  useEffect(() => {
+    if (!roomId) return
+    const messagesRef = ref(rtdb, `rooms/${roomId}/messages`)
+
+    const handleValue = (snapshot) => {
+      const data = snapshot.val()
+      const list = []
+      if (data) {
+        for (const key of Object.keys(data)) {
+          list.push({ id: key, ...data[key] })
+        }
+        list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+      }
+      setMessages(list)
+    }
+
+    onValue(messagesRef, handleValue)
+
+    return () => {
+      off(messagesRef, 'value', handleValue)
+    }
+  }, [roomId])
 
   const scrollToBottom = () => {
     if (messagesEndRef.current) {
@@ -49,29 +88,46 @@ export default function CollaborationPage() {
     scrollToBottom()
   }, [messages])
 
-  const handleSendMessage = () => {
-    if (newMessage.trim().length === 0) {
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !user) return
+    try {
+      const messagesRef = ref(rtdb, `rooms/${roomId}/messages`)
+      await push(messagesRef, {
+        senderId: user.uid,
+        senderName: user.displayName || user.email || 'You',
+        text: newMessage.trim(),
+        createdAt: Date.now(),
+      })
+      setNewMessage("")
+    } catch (err) {
+      console.error('Error sending message:', err)
+    }
+  }
+
+  const handleStartCall = async () => {
+    if (!user || !roomId) {
+      setIsCallActive(true)
       return
     }
-
-    const message = {
-      id: messages.length + 1,
-      sender: "user",
-      senderName: "You",
-      text: newMessage.trim(),
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    }
-
-    setMessages((prevMessages) => [...prevMessages, message])
-    setNewMessage("")
-  }
-
-  const handleStartCall = () => {
     setIsCallActive(true)
+    try {
+      const participantRef = ref(rtdb, `rooms/${roomId}/participants/${user.uid}`)
+      await set(participantRef, { joinedAt: Date.now(), name: user.displayName || user.email })
+    } catch (err) {
+      console.error('Error joining room presence:', err)
+    }
   }
 
-  const handleEndCall = () => {
+  const handleEndCall = async () => {
     setIsCallActive(false)
+    if (user && roomId) {
+      try {
+        const participantRef = ref(rtdb, `rooms/${roomId}/participants/${user.uid}`)
+        await set(participantRef, null)
+      } catch (err) {
+        console.error('Error leaving room presence:', err)
+      }
+    }
   }
 
   return (
@@ -87,8 +143,8 @@ export default function CollaborationPage() {
             Back to Dashboard
           </Link>
           <div className="text-center">
-            <h1 className="font-semibold">Learning Session with Sarah Chen</h1>
-            <p className="text-sm text-muted-foreground">React Advanced Patterns</p>
+            <h1 className="font-semibold">Learning Session with {collaborator?.name || 'Collaborator'}</h1>
+            <p className="text-sm text-muted-foreground">{session?.skill || '...'}</p>
           </div>
           <div className="w-20" />
         </div>
@@ -101,7 +157,14 @@ export default function CollaborationPage() {
           {/* Video Container */}
           <Card className="flex-1 bg-black/5 border-2 border-border overflow-hidden flex flex-col min-h-0">
             <CardContent className="flex-1 p-0 relative">
-              <VideoCall sessionId={sessionId} collaboratorName={"Peer"} />
+              <VideoCall sessionId={sessionId} collaboratorName={collaborator?.name} isActive={isCallActive} />
+              <div className="p-4">
+                {!isCallActive ? (
+                  <Button onClick={handleStartCall}>Join Session</Button>
+                ) : (
+                  <Button variant="destructive" onClick={handleEndCall}>Leave Session</Button>
+                )}
+              </div>
             </CardContent>
           </Card>
 
@@ -112,25 +175,25 @@ export default function CollaborationPage() {
           {/* Chat Header */}
           <div className="border-b border-border p-4 flex-shrink-0">
             <h2 className="font-semibold">Session Chat</h2>
-            <p className="text-xs text-muted-foreground">with Sarah Chen</p>
+            <p className="text-xs text-muted-foreground">with {collaborator?.name || 'Collaborator'}</p>
           </div>
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
             {messages.map((message) => (
-              <div key={message.id} className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={message.id} className={`flex ${message.senderId === user?.uid ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`max-w-xs rounded-lg px-4 py-2 ${
-                    message.sender === "user"
+                    message.senderId === user?.uid
                       ? "bg-primary text-primary-foreground rounded-br-none"
                       : "bg-muted text-muted-foreground rounded-bl-none"
                   }`}
                 >
-                  {message.sender === "collaborator" && (
+                  {message.senderId !== user?.uid && (
                     <p className="text-xs font-semibold mb-1 opacity-75">{message.senderName}</p>
                   )}
                   <p className="text-sm break-words">{message.text}</p>
-                  <p className="text-xs opacity-70 mt-1">{message.timestamp}</p>
+                  <p className="text-xs opacity-70 mt-1">{message.createdAt ? new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '...'}</p>
                 </div>
               </div>
             ))}
