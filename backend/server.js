@@ -10,8 +10,9 @@ import { db as adminDb, rtdb } from './src/config/firebaseConfig.js';
 
 // Import API routes
 import taskRoutes from './src/routes/taskRoutes.js';
-import authRoutes from './src/routes/authRoutes.js';
 
+import authRoutes from './src/routes/authRoutes.js';
+import matchmakingRoutes from './src/routes/matchmakingRoutes.js';
 // --- Firebase Admin SDK Initialization ---
 initializeFirebase();
 
@@ -25,7 +26,9 @@ const PORT = process.env.PORT || 8000;
 app.use(cors());
 // Enable parsing of JSON request bodies
 app.use(express.json());
-
+app.use('/api/v1/tasks', taskRoutes);
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/match', matchmakingRoutes);
 // --- API Routes ---
 // A simple health check endpoint to verify the server is running
 app.get('/api/health', (req, res) => {

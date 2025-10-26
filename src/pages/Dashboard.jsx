@@ -18,16 +18,21 @@ export default function DashboardPage() {
   const [currentUser, setCurrentUser] = useState(null)
   const [sessionRequests, setSessionRequests] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [initialCollaborators, setInitialCollaborators] = useState([]); // To store the default list
 
-  useEffect(() => {
+useEffect(() => {
     const fetchData = async () => {
+      console.log("Dashboard: Starting to fetch data...");
       const user = auth.currentUser;
       const uid = sessionStorage.getItem("uid");
-      if (uid) {
+      // IMPORTANT: Need to ensure user is available for getIdToken()
+      if (uid && user) { 
         // Fetch current user's data
         const userDocRef = doc(db, "users", uid);
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
+          console.log("Dashboard: Current user data found.", userDoc.data());
           setCurrentUser(userDoc.data());
         }
 
@@ -52,14 +57,32 @@ export default function DashboardPage() {
         notificationsData.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
         setNotifications(notificationsData);
 
-        // Fetch collaborators
-        const usersCollection = await getDocs(collection(db, "users"));
-        // Correctly map the document ID to a unique property, like `userId`
-        const usersData = usersCollection.docs.map(doc => ({ userId: doc.id, ...doc.data() }));
-        setCollaborators(usersData);
-        // --- DEBUGGING LINE ---
-        console.log("Fetched collaborators with unique userId:", usersData);
-        setFilteredCollaborators(usersData);
+        // --- NEW: Fetch Ranked Collaborators from the new API ---
+        try {
+          const idToken = await user.getIdToken();
+          // Fetch from your new API endpoint
+          const response = await fetch('/api/v1/match/collaborators', { 
+            headers: {
+              'Authorization': `Bearer ${idToken}`, // Pass the token for authMiddleware
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (response.ok) {
+            const rankedData = await response.json();
+            console.log("Dashboard: Fetched ranked collaborators successfully.", rankedData);
+            setInitialCollaborators(rankedData); // Store the initial ranked list
+            setFilteredCollaborators(rankedData);
+          } else {
+            console.error("Failed to fetch ranked collaborators:", response.statusText);
+            // Handle 404: Profile not initialized (for new users)
+            if (response.status === 404) {
+                 alert("Please complete your profile setup to enable matchmaking.");
+            }
+          }
+        } catch (error) {
+          console.error("Network or authentication error fetching ranked collaborators:", error);
+        }
 
         // Fetch skills
         const skillsDoc = await getDocs(collection(db, "skills"));
@@ -74,8 +97,18 @@ export default function DashboardPage() {
       }
     };
 
-    fetchData();
-  }, []);
+    // Need to wait for the auth state to load before calling fetch
+    const unsubscribe = auth.onAuthStateChanged((userState) => {
+        if (userState) {
+            fetchData();
+        } else if (sessionStorage.getItem("uid")) {
+            // If logged out but uid in session, manually load data for speed (if possible)
+            fetchData(); 
+        }
+    });
+
+    return () => unsubscribe();
+  }, []); 
 
   const handleSkillSelect = (skill, type) => {
     setSelectedSkills((prev) => ({
@@ -84,20 +117,39 @@ export default function DashboardPage() {
     }))
   }
 
-  const handleSearch = (query) => {
-    setSearchQuery(query)
-    if (query.trim()) {
-      const filtered = collaborators.filter(
-        (collab) =>
-          collab.name.toLowerCase().includes(query.toLowerCase()) ||
-          collab.skills.some((s) => s.toLowerCase().includes(query.toLowerCase())) ||
-          collab.wantsToLearn.some((s) => s.toLowerCase().includes(query.toLowerCase())),
-      )
-      setFilteredCollaborators(filtered)
-    } else {
-      setFilteredCollaborators(collaborators)
+  const handleSearchSubmit = async (e) => {
+    e.preventDefault(); // Prevent form from reloading the page
+    const query = searchQuery.trim();
+    if (!query) {
+      setFilteredCollaborators(initialCollaborators); // Reset to default list if search is empty
+      return;
     }
-  }
+
+    setIsSearching(true);
+    console.log(`Dashboard: Submitting search for "${query}"`);
+
+    try {
+      const user = auth.currentUser;
+      const idToken = await user.getIdToken();
+      const response = await fetch(`/api/v1/match/search?q=${encodeURIComponent(query)}`, {
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+        },
+      });
+      if (response.ok) {
+        const searchResults = await response.json();
+        console.log("Dashboard: Received search results:", searchResults);
+        setFilteredCollaborators(searchResults);
+      } else {
+        console.error("Search failed:", response.statusText);
+        alert("Search request failed. Please try again.");
+      }
+    } catch (error) {
+      console.error("Error during search:", error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   const handleRequestResponse = async (requestId, accepted) => {
     const request = sessionRequests.find(r => r.id === requestId);
@@ -197,15 +249,18 @@ export default function DashboardPage() {
 
         {/* Search Bar */}
         <div className="mb-8">
-          <div className="relative">
+          <form onSubmit={handleSearchSubmit} className="relative flex gap-2">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search for skills, people, or topics..."
               value={searchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="pl-10"
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 flex-1"
             />
-          </div>
+            <Button type="submit" disabled={isSearching}>
+              {isSearching ? "Searching..." : "Search"}
+            </Button>
+          </form>
         </div>
 
         <div className="grid gap-8 lg:grid-cols-3">
@@ -250,74 +305,85 @@ export default function DashboardPage() {
             <div>
               <h2 className="text-2xl font-bold mb-4">Matching Collaborators</h2>
               <div className="grid gap-4">
-                {filteredCollaborators.filter(c => c.userId !== currentUser?.userId).map((collaborator) => (
-                  <Card key={collaborator.userId} className="hover:border-primary/50 transition-colors">
-                    <CardContent className="pt-6">
-                      <div className="flex gap-4">
-                        {/* Avatar */}
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary font-bold flex-shrink-0">
-                          {collaborator.name.charAt(0)}
+                {filteredCollaborators.filter(c => c.userId !== currentUser?.userId).length > 0 ? (
+                  filteredCollaborators.filter(c => c.userId !== currentUser?.userId).map((collaborator) => (
+                    <Card key={collaborator.userId} className="hover:border-primary/50 transition-colors">
+                      <CardContent className="pt-6">
+                        <div className="flex gap-4">
+                          {/* Avatar */}
+                          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary font-bold flex-shrink-0">
+                            {collaborator.name.charAt(0)}
+                          </div>
+
+                          {/* Content */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-4 mb-2">
+                              <div>
+                                <h3 className="font-semibold text-lg">{collaborator.name}</h3>
+                                <p className="text-sm text-muted-foreground">{collaborator.bio?.substring(0, 50) || "Peer Learner"}...</p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <div className="text-lg font-bold text-primary">{collaborator.matchScore}%</div>
+                                <p className="text-xs text-muted-foreground">Match Score</p>
+                                <p className="text-xs text-muted-foreground">Rating: {collaborator.rating || 0}</p>
+                              </div>
+                            </div>
+
+                            {/* <p className="text-sm text-muted-foreground mb-3">{collaborator.bio}</p> */}
+
+                            {/* Skills */}
+                            <div className="mb-3">
+                              <p className="text-xs font-medium text-muted-foreground mb-2">Skills Known:</p>
+                              <div className="flex flex-wrap gap-2">
+                                {collaborator.skillsKnown.map((skill) => (
+                                  <span
+                                    key={skill}
+                                    className="inline-block rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
+                                  >
+                                    {skill}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Wants to Learn */}
+                            <div className="mb-4">
+                              <p className="text-xs font-medium text-muted-foreground mb-2">Wants to Learn:</p>
+                              <div className="flex flex-wrap gap-2">
+                                {collaborator.skillsToLearn.map((skill) => (
+                                  <span
+                                    key={skill}
+                                    className="inline-block rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent"
+                                  >
+                                    {skill}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex gap-2">
+                              <Link to={`/collaborator/${collaborator.userId}`} state={{ collaborator }}>
+                                <Button size="sm" variant="outline" className="gap-2 bg-transparent">
+                                  <User className="h-4 w-4" />
+                                  View Profile
+                                </Button>
+                              </Link>
+                            </div>
+                          </div>
                         </div>
-
-                        {/* Content */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-4 mb-2">
-                            <div>
-                              <h3 className="font-semibold text-lg">{collaborator.name}</h3>
-                              <p className="text-sm text-muted-foreground">{collaborator.bio?.substring(0, 50) || "Peer Learner"}...</p>
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <div className="text-lg font-bold text-primary">{collaborator.rating}</div>
-                              <p className="text-xs text-muted-foreground">Rating</p>
-                            </div>
-                          </div>
-
-                          {/* <p className="text-sm text-muted-foreground mb-3">{collaborator.bio}</p> */}
-
-                          {/* Skills */}
-                          <div className="mb-3">
-                            <p className="text-xs font-medium text-muted-foreground mb-2">Skills Known:</p>
-                            <div className="flex flex-wrap gap-2">
-                              {collaborator.skillsKnown.map((skill) => (
-                                <span
-                                  key={skill}
-                                  className="inline-block rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
-                                >
-                                  {skill}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Wants to Learn */}
-                          <div className="mb-4">
-                            <p className="text-xs font-medium text-muted-foreground mb-2">Wants to Learn:</p>
-                            <div className="flex flex-wrap gap-2">
-                              {collaborator.skillsToLearn.map((skill) => (
-                                <span
-                                  key={skill}
-                                  className="inline-block rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent"
-                                >
-                                  {skill}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Actions */}
-                          <div className="flex gap-2">
-                            <Link to={`/collaborator/${collaborator.userId}`} state={{ collaborator }}>
-                              <Button size="sm" variant="outline" className="gap-2 bg-transparent">
-                                <User className="h-4 w-4" />
-                                View Profile
-                              </Button>
-                            </Link>
-                          </div>
-                        </div>
-                      </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                ) : (
+                  <Card>
+                    <CardContent className="pt-6 text-center text-muted-foreground">
+                      {isSearching 
+                        ? "Searching for the best matches..." 
+                        : "No matching collaborators found. Try a different search term or clear the search to see all suggestions."}
                     </CardContent>
                   </Card>
-                ))}
+                )}
               </div>
             </div>
 
