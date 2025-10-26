@@ -1,17 +1,19 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Plus, X } from "lucide-react"
 import { auth, db } from "@/lib/firebase"
-import { doc, setDoc } from "firebase/firestore"
+import { doc, setDoc, collection, addDoc, getDoc } from "firebase/firestore"
+import { useAuthState } from "react-firebase-hooks/auth"
 
 export default function ProfileSetupPage() {
-  const navigate = useNavigate();
+  const navigate = useNavigate()
+  const [user, authLoading, authError] = useAuthState(auth)
   const [formData, setFormData] = useState({
-    name: "John Doe",
-    id: "PL-" + Math.random().toString(36).substr(2, 9).toUpperCase(),
+    name: "",
+    id: "",
     certification: "",
     qualification: "",
     bio: "",
@@ -22,13 +24,44 @@ export default function ProfileSetupPage() {
     availabilityTime: "",
     gender: "",
     age: "",
-    email: "john@example.com",
+    email: "",
   })
 
   const [newSkillKnown, setNewSkillKnown] = useState("")
   const [newSkillToLearn, setNewSkillToLearn] = useState("")
   const [newLanguage, setNewLanguage] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+
+  useEffect(() => {
+    if (authLoading) return // Wait until auth state is loaded
+    if (!user) {
+      navigate("/login") // Redirect if not logged in
+      return
+    }
+
+    const fetchUserProfile = async () => {
+      const userDocRef = doc(db, "users", user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (userDocSnap.exists()) {
+        // If profile exists, load it into the form for editing
+        setFormData(userDocSnap.data());
+      } else {
+        // If no profile, pre-fill form for initial setup
+        setFormData((prev) => ({
+          ...prev,
+          name: user.displayName || "",
+          email: user.email || "",
+          // Generate a unique ID only for a new user
+          id: prev.id || "PL-" + Math.random().toString(36).substr(2, 9).toUpperCase(),
+        }));
+      }
+    };
+
+    fetchUserProfile();
+
+  }, [user, authLoading, navigate])
+
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
@@ -91,16 +124,15 @@ export default function ProfileSetupPage() {
     setIsLoading(true)
 
     try {
-      const currentUser = auth.currentUser
-      if (!currentUser) {
+      if (!user) {
         throw new Error("No authenticated user found")
       }
 
       // Prepare the user data with additional fields
       const userData = {
         ...formData,
-        userId: currentUser.uid,
-        email: currentUser.email,
+        userId: user.uid,
+        email: user.email,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         isProfileComplete: true,
@@ -111,17 +143,39 @@ export default function ProfileSetupPage() {
         lastActive: new Date().toISOString()
       }
 
+      // The certification field is a string, but the profile page expects a sub-collection.
+      // For simplicity, this will add a new certification on each save if the field is filled.
+      const { certification, ...profileDataToSave } = userData;
+
       // Save to Firestore
-      await setDoc(doc(db, "users", currentUser.uid), userData)
+      await setDoc(doc(db, "users", user.uid), profileDataToSave)
+
+      // Store the user's UID in session storage for use across the app
+      sessionStorage.setItem("uid", user.uid);
+
+      // If a certification was entered, add it to the sub-collection
+      if (certification) {
+        const certsCollectionRef = collection(db, "users", user.uid, "certifications");
+        await addDoc(certsCollectionRef, {
+          name: certification,
+          issuer: "Self-declared", // Or some default value
+          date: new Date().toLocaleDateString(),
+          image: "/placeholder.svg"
+        });
+      }
       
       // Navigate to dashboard after successful setup
-      navigate("/dashboard")
+      navigate("/profile") // Navigate back to the profile page to see changes
     } catch (error) {
       console.error("Error saving profile:", error)
       alert("Failed to save profile. Please try again.")
     } finally {
       setIsLoading(false)
     }
+  }
+
+  if (authLoading || !user) {
+    return <div className="flex h-screen items-center justify-center">Loading...</div>
   }
 
   return (
@@ -415,7 +469,7 @@ export default function ProfileSetupPage() {
                 {isLoading ? "Saving Profile..." : "Save Profile"}
               </Button>
               <Button type="button" variant="outline" size="lg" asChild>
-                <Link to="/">Skip for Now</Link>
+                <Link to="/dashboard">Skip for Now</Link>
               </Button>
             </div>
           </form>

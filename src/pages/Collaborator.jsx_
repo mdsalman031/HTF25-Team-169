@@ -1,18 +1,14 @@
 import { useState, useEffect } from "react"
-import { Link, useParams, useLocation } from "react-router-dom"
-import { useAuthState } from "react-firebase-hooks/auth"
+import { Link, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Star, MessageSquare, Calendar, Award, ThumbsUp } from "lucide-react"
-import { auth, db } from "@/lib/firebase"
-import { collection, getDocs, query, where, doc, getDoc, addDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase"
+import { collection, getDocs, query, where, doc, getDoc } from "firebase/firestore";
 
 export default function CollaboratorProfilePage() {
   const { id } = useParams();
-  const location = useLocation();
-  const [user] = useAuthState(auth);
   const [isRequesting, setIsRequesting] = useState(false)
-  const [requestSent, setRequestSent] = useState(false);
   const [collaborator, setCollaborator] = useState(null);
   const [certifications, setCertifications] = useState([]);
   const [endorsements, setEndorsements] = useState([]);
@@ -20,78 +16,51 @@ export default function CollaboratorProfilePage() {
 
   useEffect(() => {
     const fetchData = async () => {
-      if (location.state?.collaborator) {
-        // If collaborator data is passed from the dashboard, use it directly.
-        setCollaborator(location.state.collaborator);
+      // --- DEBUGGING LINE ---
+      console.log("CollaboratorProfilePage: Attempting to fetch profile for ID:", id);
+
+      // Fetch collaborator profile
+      // The `id` from the URL is the user's UID. We need to query for the document
+      // where the `userId` field matches this ID.
+      const usersQuery = query(collection(db, "users"), where("userId", "==", id));
+      const userDocSnapshot = await getDocs(usersQuery);
+
+      if (!userDocSnapshot.empty) {
+        const userDoc = userDocSnapshot.docs[0];
+        setCollaborator(userDoc.data());
+        // --- DEBUGGING LINE ---
+        console.log("CollaboratorProfilePage: Found collaborator data:", userDoc.data());
+
+        // Fetch certifications
+        const certsCollection = await getDocs(collection(db, "users", id, "certifications"));
+        const certsData = certsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCertifications(certsData);
+
+        // Fetch endorsements
+        const endorsementsCollection = await getDocs(collection(db, "users", id, "endorsements"));
+        const endorsementsData = endorsementsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setEndorsements(endorsementsData);
+
+        // Fetch feedbacks
+        const feedbacksCollection = await getDocs(collection(db, "users", id, "feedbacks"));
+        const feedbacksData = feedbacksCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setFeedbacks(feedbacksData);
       } else {
-        // Fallback to fetching from Firestore if the page is accessed directly.
-        const userDoc = await getDoc(doc(db, "users", id));
-        if (userDoc.exists()) {
-          setCollaborator(userDoc.data());
-        } else {
-          console.error("CollaboratorProfilePage: No collaborator found with ID:", id);
-        }
+        // --- DEBUGGING LINE ---
+        console.error("CollaboratorProfilePage: No collaborator found with ID:", id);
       }
     };
 
     fetchData();
-  }, [id, location.state]);
+  }, [id]);
 
-  useEffect(() => {
-    if (!collaborator) return;
-    // Fetch sub-collections once collaborator data is available.
-    const fetchSubCollections = async () => {
-      const certsCollection = await getDocs(collection(db, "users", id, "certifications"));
-      setCertifications(certsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      const endorsementsCollection = await getDocs(collection(db, "users", id, "endorsements"));
-      setEndorsements(endorsementsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      const feedbacksCollection = await getDocs(collection(db, "users", id, "feedbacks"));
-      setFeedbacks(feedbacksCollection.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    };
-    fetchSubCollections();
-  }, [collaborator, id]);
-
-  useEffect(() => {
-    if (!user || !collaborator) return;
-
-    const checkRequestExists = async () => {
-      const requestsQuery = query(
-        collection(db, "sessionRequests"),
-        where("requesterId", "==", user.uid),
-        where("recipientId", "==", id),
-        where("status", "==", "pending")
-      );
-      const snapshot = await getDocs(requestsQuery);
-      if (!snapshot.empty) {
-        setRequestSent(true);
-      }
-    };
-    checkRequestExists();
-  }, [user, collaborator, id]);
-
-  const handleRequestSession = async () => {
-    if (!user || !collaborator) {
-      alert("You must be logged in to request a session.");
-      return;
-    }
-    setIsRequesting(true);
-    try {
-      await addDoc(collection(db, "sessionRequests"), {
-        requesterId: user.uid,
-        requesterName: user.displayName || "Anonymous",
-        recipientId: id,
-        recipientName: collaborator.name,
-        status: "pending",
-        createdAt: serverTimestamp(),
-      });
-      setRequestSent(true);
-    } catch (error) {
-      console.error("Error sending session request:", error);
-      alert("Failed to send request. Please try again.");
-    } finally {
-      setIsRequesting(false);
-    }
-  };
+  const handleRequestSession = () => {
+    setIsRequesting(true)
+    setTimeout(() => {
+      setIsRequesting(false)
+      alert("Session request sent!")
+    }, 1000)
+  }
 
   if (!collaborator) {
     return <div>Loading...</div>; // Or a proper loader
@@ -158,11 +127,11 @@ export default function CollaboratorProfilePage() {
 
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-3">
-                <Button size="lg" onClick={handleRequestSession} disabled={isRequesting || requestSent} className="gap-2 w-full sm:w-auto">
+                <Button size="lg" onClick={handleRequestSession} disabled={isRequesting} className="gap-2">
                   <Calendar className="h-4 w-4" />
-                  {requestSent ? "Request Sent" : isRequesting ? "Sending..." : "Request Session"}
+                  {isRequesting ? "Sending Request..." : "Request Session"}
                 </Button>
-                <Button size="lg" variant="outline" className="gap-2 bg-transparent w-full sm:w-auto">
+                <Button size="lg" variant="outline" className="gap-2 bg-transparent">
                   <MessageSquare className="h-4 w-4" />
                   Send Message
                 </Button>

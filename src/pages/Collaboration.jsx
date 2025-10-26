@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { ArrowLeft, Send, Phone, PhoneOff, Maximize2, Settings } from "lucide-react"
+import { ArrowLeft, Send } from "lucide-react"
+import VideoCall from "@/components/VideoCall"
 
 export default function CollaborationPage() {
   const { sessionId } = useParams();
@@ -99,73 +100,11 @@ export default function CollaborationPage() {
         <div className="flex-1 flex flex-col gap-4 min-h-0">
           {/* Video Container */}
           <Card className="flex-1 bg-black/5 border-2 border-border overflow-hidden flex flex-col min-h-0">
-            <CardContent className="flex-1 p-0 flex items-center justify-center relative">
-              {isCallActive ? (
-                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-primary/5">
-                  <div className="text-center">
-                    <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                      <span className="text-4xl font-bold text-primary">SC</span>
-                    </div>
-                    <p className="font-semibold mb-2">Sarah Chen</p>
-                    <p className="text-sm text-muted-foreground">Video call in progress...</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center space-y-4">
-                  <Phone className="h-16 w-16 mx-auto text-muted-foreground opacity-50" />
-                  <div>
-                    <p className="font-semibold mb-2">Ready to start?</p>
-                    <p className="text-sm text-muted-foreground mb-4">Click the button below to start a video call</p>
-                    <Button onClick={handleStartCall} size="lg" className="gap-2">
-                      <Phone className="h-4 w-4" />
-                      Start Video Call
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Call Controls */}
-              {isCallActive && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className="rounded-full h-12 w-12 bg-background/80 backdrop-blur"
-                  >
-                    <Settings className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className="rounded-full h-12 w-12 bg-background/80 backdrop-blur"
-                    onClick={() => setIsVideoOn(!isVideoOn)}
-                  >
-                    {isVideoOn ? "📹" : "📹‍"}
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className="rounded-full h-12 w-12 bg-background/80 backdrop-blur"
-                  >
-                    <Maximize2 className="h-4 w-4" />
-                  </Button>
-                  <Button size="icon" variant="destructive" className="rounded-full h-12 w-12" onClick={handleEndCall}>
-                    <PhoneOff className="h-4 w-4" />
-                  </Button>
-                </div>
-              )}
+            <CardContent className="flex-1 p-0 relative">
+              <VideoCall sessionId={sessionId} collaboratorName={"Peer"} />
             </CardContent>
           </Card>
 
-          {/* Call Info */}
-          {isCallActive && (
-            <div className="bg-card border border-border rounded-lg p-4">
-              <p className="text-sm text-muted-foreground">
-                💡 <strong>Tip:</strong> Use the chat below to share links, code snippets, or resources during your
-                session.
-              </p>
-            </div>
-          )}
         </div>
 
         {/* Chat Section */}

@@ -19,6 +19,7 @@ export default function LoginPage() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
+      sessionStorage.setItem("uid", user.uid);
       const idToken = await user.getIdToken();
       await fetch('/api/v1/auth/login', {
         method: 'POST',

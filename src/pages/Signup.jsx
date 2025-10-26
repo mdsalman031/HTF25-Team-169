@@ -32,6 +32,7 @@ export default function SignUpPage() {
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const user = userCredential.user;
+      sessionStorage.setItem("uid", user.uid);
       await fetch('/api/v1/auth/signup', {
         method: 'POST',
         headers: {

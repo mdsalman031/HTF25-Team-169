@@ -28,3 +28,4 @@ if (admin.apps.length === 0) {
 
 export const db = admin.firestore();
 export const auth = admin.auth();
+export const rtdb = admin.database();

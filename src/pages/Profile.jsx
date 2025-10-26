@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Edit2, Award, ThumbsUp } from "lucide-react"
 import { auth, db } from "../lib/firebase"
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs, query, where, doc, getDoc } from "firebase/firestore";
 
 export default function UserProfilePage() {
   const [userProfile, setUserProfile] = useState(null);
@@ -13,20 +13,21 @@ export default function UserProfilePage() {
 
   useEffect(() => {
     const fetchData = async () => {
-      const user = auth.currentUser;
-      if (user) {
+      const uid = sessionStorage.getItem("uid");
+      if (uid) {
         // Fetch user profile
-        const userDoc = await getDocs(query(collection(db, "users"), where("uid", "==", user.uid)));
-        if (!userDoc.empty) {
-          setUserProfile(userDoc.docs[0].data());
+        const userDocRef = doc(db, "users", uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          setUserProfile(userDocSnap.data());
 
           // Fetch certifications
-          const certsCollection = await getDocs(collection(db, "users", userDoc.docs[0].id, "certifications"));
+          const certsCollection = await getDocs(collection(db, "users", uid, "certifications"));
           const certsData = certsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           setCertifications(certsData);
 
           // Fetch endorsements
-          const endorsementsCollection = await getDocs(collection(db, "users", userDoc.docs[0].id, "endorsements"));
+          const endorsementsCollection = await getDocs(collection(db, "users", uid, "endorsements"));
           const endorsementsData = endorsementsCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           setEndorsements(endorsementsData);
         }
@@ -62,18 +63,20 @@ export default function UserProfilePage() {
           <div className="flex flex-col sm:flex-row gap-6 items-start justify-between">
             <div className="flex gap-6 items-start flex-1">
               <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-primary/10 text-primary text-4xl font-bold flex-shrink-0">
-                {userProfile.displayName.charAt(0)}
+                {userProfile.name.charAt(0)}
               </div>
               <div>
-                <h1 className="text-3xl font-bold">{userProfile.displayName}</h1>
-                <p className="text-muted-foreground">{userProfile.uid}</p>
+                <h1 className="text-3xl font-bold">{userProfile.name}</h1>
+                <p className="text-muted-foreground">{userProfile.id}</p>
                 <p className="text-sm text-muted-foreground mt-2">{userProfile.email}</p>
               </div>
             </div>
-            <Button className="gap-2">
-              <Edit2 className="h-4 w-4" />
-              Edit Profile
-            </Button>
+            <Link to="/profile/edit">
+              <Button className="gap-2">
+                <Edit2 className="h-4 w-4" />
+                Edit Profile
+              </Button>
+            </Link>
           </div>
         </div>
 
@@ -81,25 +84,25 @@ export default function UserProfilePage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-2xl font-bold text-primary">{userProfile.rating}</p>
+              <p className="text-2xl font-bold text-primary">{userProfile.rating || 0}</p>
               <p className="text-xs text-muted-foreground">Rating</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <p className="text-2xl font-bold text-primary">{userProfile.totalReviews}</p>
+              <p className="text-2xl font-bold text-primary">{userProfile.totalReviews || 0}</p>
               <p className="text-xs text-muted-foreground">Reviews</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <p className="text-2xl font-bold text-primary">{userProfile.sessionsCompleted}</p>
+              <p className="text-2xl font-bold text-primary">{userProfile.totalSessions || 0}</p>
               <p className="text-xs text-muted-foreground">Sessions Learned</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <p className="text-2xl font-bold text-primary">{userProfile.sessionsTaught}</p>
+              <p className="text-2xl font-bold text-primary">{userProfile.totalSessions || 0}</p>
               <p className="text-xs text-muted-foreground">Sessions Taught</p>
             </CardContent>
           </Card>
@@ -169,7 +172,7 @@ export default function UserProfilePage() {
                 <div>
                   <h4 className="font-semibold mb-3">Skills Known</h4>
                   <div className="flex flex-wrap gap-2">
-                    {userProfile.skills.map((skill) => (
+                    {userProfile.skillsKnown.map((skill) => (
                       <span
                         key={skill}
                         className="inline-block rounded-full bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
@@ -182,7 +185,7 @@ export default function UserProfilePage() {
                 <div>
                   <h4 className="font-semibold mb-3">Wants to Learn</h4>
                   <div className="flex flex-wrap gap-2">
-                    {userProfile.wantsToLearn.map((skill) => (
+                    {userProfile.skillsToLearn.map((skill) => (
                       <span
                         key={skill}
                         className="inline-block rounded-full bg-accent/10 px-3 py-1.5 text-sm font-medium text-accent"

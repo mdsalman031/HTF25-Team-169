@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Search, LogOut, User, MessageSquare } from "lucide-react"
-import { auth, db } from "../lib/firebase"
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { Search, LogOut, User, MessageSquare, Check, X, Bell, Trash2 } from "lucide-react"
+import { auth, db } from "../lib/firebase";
+import { collection, getDocs, getDoc, query, where, doc, updateDoc, addDoc, serverTimestamp, orderBy } from "firebase/firestore";
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedSkills, setSelectedSkills] = useState({})
   const [collaborators, setCollaborators] = useState([])
@@ -15,22 +16,49 @@ export default function DashboardPage() {
   const [skillSuggestions, setSkillSuggestions] = useState([])
   const [recentSessions, setRecentSessions] = useState([])
   const [currentUser, setCurrentUser] = useState(null)
+  const [sessionRequests, setSessionRequests] = useState([]);
+  const [notifications, setNotifications] = useState([]);
 
   useEffect(() => {
     const fetchData = async () => {
       const user = auth.currentUser;
-      if (user) {
+      const uid = sessionStorage.getItem("uid");
+      if (uid) {
         // Fetch current user's data
-        const userDoc = await getDocs(query(collection(db, "users"), where("uid", "==", user.uid)));
-        if (!userDoc.empty) {
-          setCurrentUser(userDoc.docs[0].data());
+        const userDocRef = doc(db, "users", uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+          setCurrentUser(userDoc.data());
         }
+
+        // Fetch incoming session requests
+        const requestsQuery = query(
+          collection(db, "sessionRequests"),
+          where("recipientId", "==", uid),
+          where("status", "==", "pending")
+        );
+        const requestsSnapshot = await getDocs(requestsQuery);
+        setSessionRequests(requestsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        // Fetch notifications for the current user
+        const notificationsQuery = query(
+          collection(db, "notifications"),
+          where("userId", "==", uid)
+          // orderBy("createdAt", "desc") // This requires a composite index.
+        );
+        const notificationsSnapshot = await getDocs(notificationsQuery);
+        const notificationsData = notificationsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Sort on the client side to avoid needing a composite index
+        notificationsData.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+        setNotifications(notificationsData);
 
         // Fetch collaborators
         const usersCollection = await getDocs(collection(db, "users"));
-        const usersData = usersCollection.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Correctly map the document ID to a unique property, like `userId`
+        const usersData = usersCollection.docs.map(doc => ({ userId: doc.id, ...doc.data() }));
         setCollaborators(usersData);
-        console.log("Fetched collaborators:", usersData);
+        // --- DEBUGGING LINE ---
+        console.log("Fetched collaborators with unique userId:", usersData);
         setFilteredCollaborators(usersData);
 
         // Fetch skills
@@ -40,7 +68,7 @@ export default function DashboardPage() {
         }
 
         // Fetch recent sessions
-        const sessionsCollection = await getDocs(query(collection(db, "sessions"), where("student", "==", user.uid)));
+        const sessionsCollection = await getDocs(query(collection(db, "sessions"), where("student", "==", uid)));
         const sessionsData = sessionsCollection.docs.map(doc => doc.data());
         setRecentSessions(sessionsData);
       }
@@ -70,6 +98,66 @@ export default function DashboardPage() {
       setFilteredCollaborators(collaborators)
     }
   }
+
+  const handleRequestResponse = async (requestId, accepted) => {
+    const request = sessionRequests.find(r => r.id === requestId);
+    if (!request || !currentUser) return;
+
+    const requestRef = doc(db, "sessionRequests", requestId);
+    try {
+      if (accepted) {
+        // Create a new session document
+        const sessionRef = await addDoc(collection(db, "sessions"), {
+          participants: [request.requesterId, request.recipientId],
+          skill: "General Session", // Placeholder, can be improved
+          createdAt: serverTimestamp(),
+          status: "scheduled",
+        });
+        // Update request status
+        await updateDoc(requestRef, { status: "accepted", sessionId: sessionRef.id });
+
+        // Create notification for requester
+        await addDoc(collection(db, "notifications"), {
+          userId: request.requesterId,
+          message: `${currentUser.name} accepted your session request.`,
+          type: "request_accepted",
+          relatedSessionId: sessionRef.id,
+          isRead: false,
+          createdAt: serverTimestamp(),
+        });
+
+        // Navigate to the new collaboration room
+        navigate(`/collaboration/${sessionRef.id}`);
+      } else {
+        // Just update the status to declined
+        await updateDoc(requestRef, { status: "declined" });
+        // Create notification for requester
+        await addDoc(collection(db, "notifications"), {
+          userId: request.requesterId,
+          message: `${currentUser.name} declined your session request.`,
+          type: "request_declined",
+          isRead: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+      // Remove the request from the local state
+      setSessionRequests(prev => prev.filter(r => r.id !== requestId));
+    } catch (error) {
+      console.error("Error handling request response:", error);
+      alert("Failed to respond to request. Please try again.");
+    }
+  };
+
+  const handleDismissNotification = async (notificationId) => {
+    const notificationRef = doc(db, "notifications", notificationId);
+    try {
+      await updateDoc(notificationRef, { isRead: true });
+      setNotifications(prev => prev.filter(n => n.id !== notificationId));
+    } catch (error) {
+      console.error("Error dismissing notification:", error);
+    }
+  };
+
 
   return (
     <div className="min-h-screen bg-background">
@@ -162,8 +250,8 @@ export default function DashboardPage() {
             <div>
               <h2 className="text-2xl font-bold mb-4">Matching Collaborators</h2>
               <div className="grid gap-4">
-                {filteredCollaborators.map((collaborator) => (
-                  <Card key={collaborator.id} className="hover:border-primary/50 transition-colors">
+                {filteredCollaborators.filter(c => c.userId !== currentUser?.userId).map((collaborator) => (
+                  <Card key={collaborator.userId} className="hover:border-primary/50 transition-colors">
                     <CardContent className="pt-6">
                       <div className="flex gap-4">
                         {/* Avatar */}
@@ -176,7 +264,7 @@ export default function DashboardPage() {
                           <div className="flex items-start justify-between gap-4 mb-2">
                             <div>
                               <h3 className="font-semibold text-lg">{collaborator.name}</h3>
-                              <p className="text-sm text-muted-foreground">{collaborator.id}</p>
+                              <p className="text-sm text-muted-foreground">{collaborator.bio?.substring(0, 50) || "Peer Learner"}...</p>
                             </div>
                             <div className="text-right flex-shrink-0">
                               <div className="text-lg font-bold text-primary">{collaborator.rating}</div>
@@ -184,13 +272,13 @@ export default function DashboardPage() {
                             </div>
                           </div>
 
-                          <p className="text-sm text-muted-foreground mb-3">{collaborator.bio}</p>
+                          {/* <p className="text-sm text-muted-foreground mb-3">{collaborator.bio}</p> */}
 
                           {/* Skills */}
                           <div className="mb-3">
                             <p className="text-xs font-medium text-muted-foreground mb-2">Skills Known:</p>
                             <div className="flex flex-wrap gap-2">
-                              {collaborator.skills.map((skill) => (
+                              {collaborator.skillsKnown.map((skill) => (
                                 <span
                                   key={skill}
                                   className="inline-block rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
@@ -205,7 +293,7 @@ export default function DashboardPage() {
                           <div className="mb-4">
                             <p className="text-xs font-medium text-muted-foreground mb-2">Wants to Learn:</p>
                             <div className="flex flex-wrap gap-2">
-                              {collaborator.wantsToLearn.map((skill) => (
+                              {collaborator.skillsToLearn.map((skill) => (
                                 <span
                                   key={skill}
                                   className="inline-block rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent"
@@ -218,16 +306,12 @@ export default function DashboardPage() {
 
                           {/* Actions */}
                           <div className="flex gap-2">
-                            <Link to={`/collaborator/${collaborator.id}`}>
+                            <Link to={`/collaborator/${collaborator.userId}`} state={{ collaborator }}>
                               <Button size="sm" variant="outline" className="gap-2 bg-transparent">
                                 <User className="h-4 w-4" />
                                 View Profile
                               </Button>
                             </Link>
-                            <Button size="sm" className="gap-2">
-                              <MessageSquare className="h-4 w-4" />
-                              Request Session
-                            </Button>
                           </div>
                         </div>
                       </div>
@@ -236,6 +320,73 @@ export default function DashboardPage() {
                 ))}
               </div>
             </div>
+
+            {/* Notifications */}
+            {notifications.filter(n => !n.isRead).length > 0 && (
+              <div>
+                <h2 className="text-2xl font-bold mb-4">Notifications</h2>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="space-y-4">
+                      {notifications.filter(n => !n.isRead).map((notification) => (
+                        <div key={notification.id} className="flex items-center justify-between p-3 rounded-lg border border-border">
+                          <div className="flex items-center gap-3">
+                            <Bell className={`h-5 w-5 ${notification.type === 'request_accepted' ? 'text-green-500' : 'text-red-500'}`} />
+                            <div>
+                              <p className="text-sm font-medium">{notification.message}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {notification.createdAt?.toDate().toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            {notification.type === 'request_accepted' && (
+                              <Button asChild size="sm" variant="outline" className="gap-1"><Link to={`/collaboration/${notification.relatedSessionId}`}>Join</Link></Button>
+                            )}
+                            <Button size="icon" variant="ghost" onClick={() => handleDismissNotification(notification.id)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* Session Requests */}
+            {sessionRequests.length > 0 && (
+              <div>
+                <h2 className="text-2xl font-bold mb-4">Session Requests</h2>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="space-y-4">
+                      {sessionRequests.map((request) => (
+                        <div key={request.id} className="flex items-center justify-between p-3 rounded-lg border border-border">
+                          <div>
+                            <p className="font-medium">
+                              <Link to={`/collaborator/${request.requesterId}`} className="hover:underline">
+                                {request.requesterName}
+                              </Link>
+                            </p>
+                            <p className="text-sm text-muted-foreground">wants to start a session.</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" className="gap-1" onClick={() => handleRequestResponse(request.id, true)}>
+                              <Check className="h-4 w-4" /> Accept
+                            </Button>
+                            <Button size="sm" variant="destructive" className="gap-1" onClick={() => handleRequestResponse(request.id, false)}>
+                              <X className="h-4 w-4" /> Decline
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
 
             {/* Previous Sessions */}
             <div>
